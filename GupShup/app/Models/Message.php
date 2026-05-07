@@ -12,8 +12,10 @@ class Message extends MongoModel
     protected $fillable = [
         'conversation_id',
         'sender_id',
-        'ciphertext',
-        'iv',
+        'recipient_ciphertext',
+        'recipient_iv',        
+        'sender_ciphertext',   
+        'sender_iv',           
         'type',
         'read_at',
     ];

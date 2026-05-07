@@ -92,11 +92,9 @@ class ChatController extends Controller
      */
     public function getMessages($conversationId)
     {
-        
         $userId = (string) Auth::id();
         $conversationId = (string) $conversationId;
 
-        // Verify user is a participant
         $conversation = Conversation::find($conversationId);
         if (!$conversation || !$this->isParticipant($userId, $conversation->participants ?? [])) {
             return response()->json(['error' => 'Not authorized'], 403);
@@ -106,13 +104,15 @@ class ChatController extends Controller
             ->orderBy('created_at', 'asc')
             ->get()
             ->map(function ($msg) use ($userId) {
+                $isMine = (string) $msg->sender_id === $userId;
                 return [
                     'id' => (string) $msg->_id,
                     'sender_id' => (string) $msg->sender_id,
-                    'ciphertext' => $msg->ciphertext,
-                    'iv' => $msg->iv,
+                    // MAGIC HAPPENS HERE: Serve the correct payload
+                    'ciphertext' => $isMine ? $msg->sender_ciphertext : $msg->recipient_ciphertext,
+                    'iv' => $isMine ? $msg->sender_iv : $msg->recipient_iv,
                     'type' => $msg->type ?? 'text',
-                    'is_mine' => (string) $msg->sender_id === $userId,
+                    'is_mine' => $isMine,
                     'read_at' => $msg->read_at ? $msg->read_at->toIso8601String() : null,
                     'created_at' => $msg->created_at->toIso8601String(),
                 ];
@@ -128,14 +128,15 @@ class ChatController extends Controller
     {
         $request->validate([
             'conversation_id' => ['required', 'string'],
-            'ciphertext' => ['required', 'string'],
-            'iv' => ['required', 'string'],
+            'recipient_ciphertext' => ['required', 'string'],
+            'recipient_iv' => ['required', 'string'],
+            'sender_ciphertext' => ['required', 'string'],
+            'sender_iv' => ['required', 'string'],
         ]);
 
         $userId = (string) Auth::id();
         $conversationId = (string) $request->conversation_id;
 
-        // Verify user is a participant
         $conversation = Conversation::find($conversationId);
         if (!$conversation || !$this->isParticipant($userId, $conversation->participants ?? [])) {
             return response()->json(['error' => 'Not authorized'], 403);
@@ -144,22 +145,23 @@ class ChatController extends Controller
         $message = Message::create([
             'conversation_id' => $conversationId,
             'sender_id' => $userId,
-            'ciphertext' => $request->ciphertext,
-            'iv' => $request->iv,
+            'recipient_ciphertext' => $request->recipient_ciphertext,
+            'recipient_iv' => $request->recipient_iv,
+            'sender_ciphertext' => $request->sender_ciphertext,
+            'sender_iv' => $request->sender_iv,
             'type' => $request->type ?? 'text',
         ]);
 
-        // Update conversation last message
-        $conversation-> update([
-            'last_message_text' => $request->ciphertext,
+        $conversation->update([
+            'last_message_text' => 'Encrypted message', // Don't store ciphertext in convo data
             'last_message_at' => now(),
         ]);
 
         return response()->json([
             'id' => (string) $message->_id,
             'sender_id' => (string) $message->sender_id,
-            'ciphertext' => $message->ciphertext,
-            'iv' => $message->iv,
+            'ciphertext' => $message->sender_ciphertext, // Send the sender's version back
+            'iv' => $message->sender_iv,
             'type' => $message->type,
             'is_mine' => true,
             'read_at' => null,
@@ -300,16 +302,16 @@ class ChatController extends Controller
                 ->where('sender_id', '!=', $userId)
                 ->orderBy('created_at', 'asc')
                 ->get()
-                ->map(function ($msg) use ($userId) {
-                    // Get sender info for decryption
+                ->map(function ($msg) {
                     $sender = User::find($msg->sender_id);
                     return [
                         'id' => (string) $msg->_id,
                         'conversation_id' => (string) $msg->conversation_id,
                         'sender_id' => (string) $msg->sender_id,
                         'sender_public_key' => $sender ? $sender->public_key : null,
-                        'ciphertext' => $msg->ciphertext,
-                        'iv' => $msg->iv,
+                        // Incoming polled messages are always from someone else, so we use recipient payload
+                        'ciphertext' => $msg->recipient_ciphertext,
+                        'iv' => $msg->recipient_iv,
                         'type' => $msg->type ?? 'text',
                         'is_mine' => false,
                         'read_at' => $msg->read_at ? $msg->read_at->toIso8601String() : null,

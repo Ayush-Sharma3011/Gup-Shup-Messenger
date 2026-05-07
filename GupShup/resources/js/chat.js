@@ -15,6 +15,7 @@ import {
 // ===== State =====
 let currentUser = null;
 let privateKey = null;
+let selfSharedKey = null;
 let conversations = [];
 let activeConversation = null;
 let activeSharedKey = null;
@@ -32,8 +33,34 @@ export async function initChat() {
     // Load private key
     privateKey = await loadPrivateKey();
     if (!privateKey) {
-        console.warn('No private key found. E2EE will not work on this device.');
-    }
+        console.warn('No private key found. Generating a new keypair for this device...');
+        
+        try {
+            const { generateKeyPair, exportPublicKey, savePrivateKey } = await import('./crypto.js');
+            
+            // Generate new keys
+            const keyPair = await generateKeyPair();
+            await savePrivateKey(keyPair.privateKey);
+            privateKey = keyPair.privateKey;
+            
+            // Export and upload the new Public Key to the server
+            const publicKeyJwk = await exportPublicKey(keyPair.publicKey);
+            await apiPost('/api/update-public-key', { 
+                public_key: JSON.stringify(publicKeyJwk) 
+            });
+            
+            // Update our local user object so the selfSharedKey derives correctly
+            currentUser.public_key = JSON.stringify(publicKeyJwk);
+            console.log('New keys generated and synced to server!');
+            
+        } catch (e) {
+            console.error('Failed to generate new keys:', e);
+            return; // Stop initialization if crypto fails
+        }
+    } 
+    
+    // Derive a key using our OWN public key for decrypting our own message history
+    selfSharedKey = await getSharedKey(currentUser.public_key);
 
     // Bind events
     bindEvents();
@@ -68,6 +95,7 @@ async function apiPost(url, data = {}) {
         body: JSON.stringify(data),
     });
     if (res.status === 401) { window.location.href = '/login'; return null; }
+    
     return res.json();
 }
 
@@ -200,6 +228,7 @@ async function selectConversation(conv) {
     await loadMessages(conv.id);
 
     // Mark as read
+    
     await apiPost(`/api/messages/${conv.id}/read`);
 
     // Update unread count in sidebar
@@ -255,11 +284,14 @@ async function createMessageBubble(msg) {
     el.className = 'message ' + (msg.is_mine ? 'message--sent' : 'message--received');
     el.dataset.id = msg.id;
 
-    // Decrypt message
+    // Decrypt message based on ownership
     let text = '🔒 Encrypted message';
-    if (activeSharedKey) {
+    const keyToUse = msg.is_mine ? selfSharedKey : activeSharedKey;
+
+    
+    if (keyToUse) {
         try {
-            text = await decryptMessage(msg.ciphertext, msg.iv, activeSharedKey);
+            text = await decryptMessage(msg.ciphertext, msg.iv, keyToUse);
         } catch (e) {
             text = '🔒 Unable to decrypt';
             console.error('Decryption failed:', e);
@@ -287,21 +319,22 @@ async function createMessageBubble(msg) {
 async function sendMessage() {
     const input = document.getElementById('message-input');
     const text = input.value.trim();
-    if (!text || !activeConversation || !activeSharedKey) return;
+    if (!text || !activeConversation || !activeSharedKey || !selfSharedKey) return;
 
     input.value = '';
     updateSendButton();
 
     try {
-        // Encrypt
-        const { ciphertext, iv } = await encryptMessage(text, activeSharedKey);
+        // ENCRYPT TWICE
+        const recipientPayload = await encryptMessage(text, activeSharedKey);
+        const senderPayload = await encryptMessage(text, selfSharedKey);
 
         // Optimistically render
         const optimisticMsg = {
             id: 'temp-' + Date.now(),
             sender_id: currentUser.id,
-            ciphertext,
-            iv,
+            ciphertext: senderPayload.ciphertext,
+            iv: senderPayload.iv,
             is_mine: true,
             read_at: null,
             created_at: new Date().toISOString(),
@@ -310,11 +343,13 @@ async function sendMessage() {
         document.getElementById('chat-messages').appendChild(bubble);
         scrollToBottom();
 
-        // Send to server
+        // Send BOTH payloads to server
         const result = await apiPost('/api/messages', {
             conversation_id: activeConversation.id,
-            ciphertext,
-            iv,
+            recipient_ciphertext: recipientPayload.ciphertext,
+            recipient_iv: recipientPayload.iv,
+            sender_ciphertext: senderPayload.ciphertext,
+            sender_iv: senderPayload.iv,
         });
 
         if (result && result.id) {
@@ -322,7 +357,7 @@ async function sendMessage() {
             lastPollTime = result.created_at;
 
             // Update conversation in sidebar
-            activeConversation.last_message_text = ciphertext;
+            activeConversation.last_message_text = recipientPayload.ciphertext;
             activeConversation.last_message_at = result.created_at;
 
             // Move to top
