@@ -537,6 +537,10 @@ function bindEvents() {
     }
 
     // New chat button
+    const backupBtn = document.getElementById('backup-key-btn');
+    if (backupBtn) {
+        backupBtn.addEventListener('click', downloadRecoveryKey);
+    }
     const newChatBtn = document.getElementById('new-chat-btn');
     if (newChatBtn) {
         newChatBtn.addEventListener('click', openModal);
@@ -643,4 +647,29 @@ function formatRelativeTime(isoString) {
 function formatMessageTime(isoString) {
     const date = new Date(isoString);
     return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function downloadRecoveryKey() {
+    const keyData = localStorage.getItem('gupshup_private_key');
+    if (!keyData) {
+        alert('No private key found to backup!');
+        return;
+    }
+
+    // Create a secure Blob from the local storage data
+    const blob = new Blob([keyData], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    
+    // Create a temporary link to trigger the download
+    const a = document.createElement('a');
+    a.href = url;
+    const safeName = currentUser.name.replace(/\s+/g, '_').toLowerCase();
+    a.download = `gupshup_recovery_key_${safeName}.txt`;
+    
+    document.body.appendChild(a);
+    a.click();
+    
+    // Cleanup
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
 }

@@ -59,6 +59,12 @@
                            class="auth-input" placeholder="••••••••">
                 </div>
 
+                <div class="auth-field" style="margin-top: 15px;">
+                    <label for="recovery_file" class="auth-label">Restore E2EE Key (Optional)</label>
+                    <p class="auth-card-desc" style="font-size: 12px; margin-bottom: 8px;">Upload your .txt backup file if logging in from a new device.</p>
+                    <input type="file" id="recovery_file" accept=".txt" class="auth-input" style="padding: 8px;">
+                </div>
+
                 <div class="auth-options">
                     <label class="auth-checkbox-label">
                         <input type="checkbox" name="remember" class="auth-checkbox">
@@ -86,3 +92,47 @@
     </div>
 </div>
 @endsection
+
+@push('scripts')
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('login-form');
+        const fileInput = document.getElementById('recovery_file');
+        const loginBtn = document.getElementById('login-btn');
+
+        form.addEventListener('submit', function(e) {
+            e.preventDefault(); // Stop standard submission
+            
+            // If the user uploaded a recovery key
+            if (fileInput.files.length > 0) {
+                const file = fileInput.files[0];
+                const reader = new FileReader();
+                
+                // Change button text to show progress
+                loginBtn.querySelector('span').textContent = "Restoring Key...";
+                
+                reader.onload = function(event) {
+                    try {
+                        const keyData = event.target.result;
+                        JSON.parse(keyData); // Validates that it is proper JSON (a JWK)
+                        
+                        // Inject into local storage
+                        localStorage.setItem('gupshup_private_key', keyData);
+                        console.log("Recovery key restored successfully.");
+                        
+                        // Submit to Laravel
+                        form.submit();
+                    } catch (err) {
+                        alert("Invalid recovery key file. Please upload the exact .txt file you downloaded.");
+                        loginBtn.querySelector('span').textContent = "Sign in";
+                    }
+                };
+                reader.readAsText(file);
+            } else {
+                // No key uploaded, just log in normally
+                form.submit();
+            }
+        });
+    });
+</script>
+@endpush
