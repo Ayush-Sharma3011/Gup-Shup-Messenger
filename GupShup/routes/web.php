@@ -49,6 +49,7 @@ Route::middleware('auth')->group(function () {
         Route::get('/messages/{conversationId}', [ChatController::class, 'getMessages']);
         Route::post('/messages', [ChatController::class, 'sendMessage']);
         Route::post('/messages/{conversationId}/read', [ChatController::class, 'markAsRead']);
+        Route::delete('/messages/{id}', [ChatController::class, 'deleteMessage']);
 
         // Polling
         Route::get('/poll', [ChatController::class, 'pollMessages']);

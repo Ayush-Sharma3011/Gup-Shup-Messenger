@@ -132,6 +132,21 @@
             {{-- Message Input --}}
             <div class="chat-input-bar">
                 <div class="chat-input-wrapper">
+                    <div id="sticker-menu" style="display: flex; gap: 10px; padding: 10px; background: #f3f4f6; border-radius: 8px; margin-bottom: 10px;">
+                    <button onclick="sendSticker('thumbs_up')">👍</button>
+                    <button onclick="sendSticker('heart')">❤️</button>
+                    <button onclick="sendSticker('laugh')">😂</button>
+                    <button onclick="sendSticker('angle_halo')">😇</button>
+                    <button onclick="sendSticker('cowboy')">🤠</button>
+                    <button onclick="sendSticker('crying')">😢</button>
+                    <button onclick="sendSticker('dizzy')">😵</button>
+                    <button onclick="sendSticker('drooling')">🤤</button>
+                    <button onclick="sendSticker('loudly_crying')">😭</button>
+                    <button onclick="sendSticker('slightly_smiling')">🙂</button>
+                    <button onclick="sendSticker('upside_down_crying')">🙃</button>
+
+
+                </div>
                     <input type="text" class="chat-input" id="message-input" placeholder="Type an encrypted message..." autocomplete="off">
                 </div>
                 <button class="send-btn" id="send-btn" disabled>
@@ -174,12 +189,13 @@
 @push('scripts')
 <script>
     window.GUPSHUP_USER = {!! json_encode([
-            'id' => (string) $currentUser->_id,
-            'name' => $currentUser->name,
-            'email' => $currentUser->email,
-            'avatar_color' => $currentUser->avatar_color,
-            'public_key' => $currentUser->public_key,
-        ]) !!};
+        'id'           => (string) $currentUser->_id,
+        'name'         => $currentUser->name,
+        'email'        => $currentUser->email,
+        'avatar_color' => $currentUser->avatar_color,
+        'public_key'   => $currentUser->public_key,
+    ]) !!};
+    
     window.GUPSHUP_CSRF = '{{ csrf_token() }}';
 </script>
 @endpush

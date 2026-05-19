@@ -115,6 +115,7 @@ class ChatController extends Controller
                     'is_mine' => $isMine,
                     'read_at' => $msg->read_at ? $msg->read_at->toIso8601String() : null,
                     'created_at' => $msg->created_at->toIso8601String(),
+                    'is_deleted' => $msg->is_deleted ?? false,
                 ];
             });
 
@@ -316,6 +317,7 @@ class ChatController extends Controller
                         'is_mine' => false,
                         'read_at' => $msg->read_at ? $msg->read_at->toIso8601String() : null,
                         'created_at' => $msg->created_at->toIso8601String(),
+                        'is_deleted' => $msg->is_deleted ?? false,
                     ];
                 });
 
@@ -358,6 +360,30 @@ class ChatController extends Controller
             'messages' => [],
             'conversations' => [],
         ]);
+    }
+
+
+    /**
+     * *Delete a message (API).
+    */
+
+    public function deleteMessage($id)
+    {
+        $userId = (string) Auth::id();
+        $message = Message::find($id);
+
+        // Only the sender can delete their own message
+        if ($message && $message->sender_id === $userId) {
+            $message->update([
+                'is_deleted' => true,
+                'sender_ciphertext' => null,  // Destroy the data!
+                'recipient_ciphertext' => null,
+                'sender_iv' => null,
+                'recipient_iv' => null,
+            ]);
+            return response()->json(['success' => true]);
+        }
+        return response()->json(['error' => 'Unauthorized'], 403);
     }
 
     /**

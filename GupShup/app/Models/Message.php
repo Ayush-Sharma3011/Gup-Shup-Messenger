@@ -18,12 +18,14 @@ class Message extends MongoModel
         'sender_iv',           
         'type',
         'read_at',
+        'is_deleted',
     ];
 
     protected function casts(): array
     {
         return [
             'read_at' => 'datetime',
+            'is_deleted' => 'boolean',
         ];
     }
 

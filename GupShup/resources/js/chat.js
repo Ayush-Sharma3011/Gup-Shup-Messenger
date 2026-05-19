@@ -34,31 +34,31 @@ export async function initChat() {
     privateKey = await loadPrivateKey();
     if (!privateKey) {
         console.warn('No private key found. Generating a new keypair for this device...');
-        
+
         try {
             const { generateKeyPair, exportPublicKey, savePrivateKey } = await import('./crypto.js');
-            
+
             // Generate new keys
             const keyPair = await generateKeyPair();
             await savePrivateKey(keyPair.privateKey);
             privateKey = keyPair.privateKey;
-            
+
             // Export and upload the new Public Key to the server
             const publicKeyJwk = await exportPublicKey(keyPair.publicKey);
-            await apiPost('/api/update-public-key', { 
-                public_key: JSON.stringify(publicKeyJwk) 
+            await apiPost('/api/update-public-key', {
+                public_key: JSON.stringify(publicKeyJwk)
             });
-            
+
             // Update our local user object so the selfSharedKey derives correctly
             currentUser.public_key = JSON.stringify(publicKeyJwk);
             console.log('New keys generated and synced to server!');
-            
+
         } catch (e) {
             console.error('Failed to generate new keys:', e);
             return; // Stop initialization if crypto fails
         }
-    } 
-    
+    }
+
     // Derive a key using our OWN public key for decrypting our own message history
     selfSharedKey = await getSharedKey(currentUser.public_key);
 
@@ -95,7 +95,7 @@ async function apiPost(url, data = {}) {
         body: JSON.stringify(data),
     });
     if (res.status === 401) { window.location.href = '/login'; return null; }
-    
+
     return res.json();
 }
 
@@ -228,7 +228,7 @@ async function selectConversation(conv) {
     await loadMessages(conv.id);
 
     // Mark as read
-    
+
     await apiPost(`/api/messages/${conv.id}/read`);
 
     // Update unread count in sidebar
@@ -284,35 +284,49 @@ async function createMessageBubble(msg) {
     el.className = 'message ' + (msg.is_mine ? 'message--sent' : 'message--received');
     el.dataset.id = msg.id;
 
-    // Decrypt message based on ownership
     let text = '🔒 Encrypted message';
-    const keyToUse = msg.is_mine ? selfSharedKey : activeSharedKey;
 
-    
-    if (keyToUse) {
-        try {
-            text = await decryptMessage(msg.ciphertext, msg.iv, keyToUse);
-        } catch (e) {
-            text = '🔒 Unable to decrypt';
-            console.error('Decryption failed:', e);
+    // Check if deleted first!
+    if (msg.is_deleted) {
+        text = '<i>🚫 This message was deleted</i>';
+    } else {
+        const keyToUse = msg.is_mine ? selfSharedKey : activeSharedKey;
+        if (keyToUse && msg.ciphertext) {
+            try {
+                // Decrypt the raw text
+                let rawText = await decryptMessage(msg.ciphertext, msg.iv, keyToUse);
+
+                // Check if it's a sticker code!
+                if (rawText.startsWith('[STICKER::') && rawText.endsWith(']')) {
+                    // Extract 'thumbs_up' from '[STICKER::thumbs_up]'
+                    const stickerName = rawText.replace('[STICKER::', '').replace(']', '');
+                    // Render an image instead of text. (Make sure you don't escapeHtml this!)
+                    text = `<img src="../stickers/${stickerName}.png" alt="Sticker" style="width: 80px; height: 80px;" />`;
+                } else {
+                    // Standard text message
+                    text = escapeHtml(rawText);
+                }
+            } catch (e) {
+                text = '🔒 Unable to decrypt';
+            }
         }
     }
 
     const time = formatMessageTime(msg.created_at);
-    const readCheck = msg.is_mine
-        ? `<span class="message-read ${msg.read_at ? 'message-read--seen' : ''}">${msg.read_at ? '✓✓' : '✓'}</span>`
+    // Add a delete button if it's mine and not already deleted
+    const deleteBtnHtml = (msg.is_mine && !msg.is_deleted)
+        ? `<button class="delete-btn" onclick="deleteMessage('${msg.id}')" style="background:none;border:none;cursor:pointer;opacity:0.5;font-size:12px;margin-right:5px;">🗑️</button>`
         : '';
 
     el.innerHTML = `
         <div class="message-bubble">
-            <span class="message-text">${escapeHtml(text)}</span>
+            <span class="message-text">${text}</span>
             <span class="message-meta">
+                ${deleteBtnHtml}
                 <span class="message-time">${time}</span>
-                ${readCheck}
             </span>
         </div>
     `;
-
     return el;
 }
 
@@ -325,11 +339,11 @@ async function sendMessage() {
     updateSendButton();
 
     try {
-        // ENCRYPT TWICE
+        // 1. ENCRYPT TWICE
         const recipientPayload = await encryptMessage(text, activeSharedKey);
         const senderPayload = await encryptMessage(text, selfSharedKey);
 
-        // Optimistically render
+        // 2. Optimistically render
         const optimisticMsg = {
             id: 'temp-' + Date.now(),
             sender_id: currentUser.id,
@@ -339,11 +353,12 @@ async function sendMessage() {
             read_at: null,
             created_at: new Date().toISOString(),
         };
+        
         const bubble = await createOptimisticBubble(text, optimisticMsg);
         document.getElementById('chat-messages').appendChild(bubble);
         scrollToBottom();
 
-        // Send BOTH payloads to server
+        // 3. Send BOTH payloads to server
         const result = await apiPost('/api/messages', {
             conversation_id: activeConversation.id,
             recipient_ciphertext: recipientPayload.ciphertext,
@@ -380,9 +395,19 @@ async function createOptimisticBubble(plaintext, msg) {
 
     const time = formatMessageTime(msg.created_at);
 
+    let displayContent = '';
+
+    if (plaintext.startsWith('[STICKER::') && plaintext.endsWith(']')) {
+        const stickerName = plaintext.replace('[STICKER::', '').replace(']', '');
+        displayContent = `<img src="/stickers/${stickerName}.png" alt="Sticker" style="width: 80px; height: 80px;" />`;
+    } else {
+        displayContent = escapeHtml(plaintext);
+    }
+
+
     el.innerHTML = `
         <div class="message-bubble">
-            <span class="message-text">${escapeHtml(plaintext)}</span>
+            <span class="message-text">${displayContent}</span>
             <span class="message-meta">
                 <span class="message-time">${time}</span>
                 <span class="message-read">✓</span>
@@ -396,6 +421,21 @@ async function createOptimisticBubble(plaintext, msg) {
     return el;
 }
 
+window.deleteMessage = async function (messageId) {
+    if (!confirm('Delete this message for everyone?')) return;
+
+    await fetch(`/api/messages/${messageId}`, {
+        method: 'DELETE',
+        headers: { 'X-CSRF-TOKEN': CSRF, 'Accept': 'application/json' }
+    });
+
+    // Optimistically update the UI
+    const bubble = document.querySelector(`[data-id="${messageId}"]`);
+    if (bubble) {
+        bubble.querySelector('.message-text').innerHTML = '<i>🚫 This message was deleted</i>';
+        bubble.querySelector('.delete-btn')?.remove();
+    }
+};
 // ===== Polling =====
 function startPolling() {
     if (pollTimer) clearInterval(pollTimer);
@@ -454,7 +494,7 @@ async function pollForUpdates() {
 function startHeartbeat() {
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     heartbeatTimer = setInterval(() => {
-        apiPost('/api/heartbeat').catch(() => {});
+        apiPost('/api/heartbeat').catch(() => { });
     }, 30000);
 }
 
@@ -603,6 +643,13 @@ function bindEvents() {
         if (e.key === 'Escape') closeModal();
     });
 }
+window.sendSticker = function (stickerName) {
+    const input = document.getElementById('message-input');
+    // Set the input to our secret code
+    input.value = `[STICKER::${stickerName}]`;
+    // Trigger the normal send function
+    sendMessage();
+};
 
 function updateSendButton() {
     const input = document.getElementById('message-input');
@@ -659,16 +706,16 @@ function downloadRecoveryKey() {
     // Create a secure Blob from the local storage data
     const blob = new Blob([keyData], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
-    
+
     // Create a temporary link to trigger the download
     const a = document.createElement('a');
     a.href = url;
     const safeName = currentUser.name.replace(/\s+/g, '_').toLowerCase();
     a.download = `gupshup_recovery_key_${safeName}.txt`;
-    
+
     document.body.appendChild(a);
     a.click();
-    
+
     // Cleanup
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
